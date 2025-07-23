@@ -1,61 +1,67 @@
-# guitar_project
+# Reinforcement Learning for Guitar Signal Reproduction
 
-<a target="_blank" href="https://cookiecutter-data-science.drivendata.org/">
-    <img src="https://img.shields.io/badge/CCDS-Project%20template-328F97?logo=cookiecutter" />
-</a>
+Can a reinforcement learning agent recreate any guitar signal using just a guitar and pedal configurations?
 
-Project to use reinforcement learning to recreate guitar waveforms
+This project aims to model the behavior of guitar signal processing using reinforcement learning (RL). Specifically, it explores whether an RL agent can match a target audio output by controlling virtual guitar effects pedals.
 
-## Project Organization
+---
 
+## Project Objective
+
+The goal is to simulate a virtual signal chain where an RL agent learns to reproduce arbitrary guitar tones. The system will be trained to match target audio clips by adjusting pedal settings within a selected synthesized environment.
+
+---
+
+## To-Do
+
+- [ ] **Implement the guitar synthesizer**  
+  Build a component to generate clean or distorted guitar signals in response to MIDI or waveform input.
+
+- [ ] **Preprocess audio**  
+  Prepare datasets (e.g., spectrograms, normalization, framing) for RL training and evaluation.
+
+- [ ] **Create RL algorithm using Stable-Baselines3**  
+  Design and train an RL agent whose actions represent pedal configurations, and whose reward is based on similarity to a target audio signal.
+
+---
+
+## Directory Structure
 ```
-├── LICENSE            <- Open-source license if one is chosen
-├── Makefile           <- Makefile with convenience commands like `make data` or `make train`
-├── README.md          <- The top-level README for developers using this project.
+guitar-rl/
+├── LICENSE
+├── Makefile
+├── README.md
 ├── data
-│   ├── external       <- Data from third party sources.
-│   ├── interim        <- Intermediate data that has been transformed.
-│   ├── processed      <- The final, canonical data sets for modeling.
-│   └── raw            <- The original, immutable data dump.
+│   ├── external
+│   ├── interim
+│   ├── processed
+│   └── raw
 │
-├── docs               <- A default mkdocs project; see www.mkdocs.org for details
+├── docs
 │
-├── models             <- Trained and serialized models, model predictions, or model summaries
+├── models
 │
-├── notebooks          <- Jupyter notebooks. Naming convention is a number (for ordering),
-│                         the creator's initials, and a short `-` delimited description, e.g.
-│                         `1.0-jqp-initial-data-exploration`.
+├── notebooks
 │
-├── pyproject.toml     <- Project configuration file with package metadata for 
-│                         guitar_project and configuration for tools like black
+├── pyproject.toml
 │
-├── references         <- Data dictionaries, manuals, and all other explanatory materials.
+├── references
 │
-├── reports            <- Generated analysis as HTML, PDF, LaTeX, etc.
-│   └── figures        <- Generated graphics and figures to be used in reporting
+├── reports
+│   └── figures
 │
-├── requirements.txt   <- The requirements file for reproducing the analysis environment, e.g.
-│                         generated with `pip freeze > requirements.txt`
+├── requirements.txt
 │
-├── setup.cfg          <- Configuration file for flake8
+├── setup.cfg
 │
-└── guitar_project   <- Source code for use in this project.
-    │
-    ├── __init__.py             <- Makes guitar_project a Python module
-    │
-    ├── config.py               <- Store useful variables and configuration
-    │
-    ├── dataset.py              <- Scripts to download or generate data
-    │
-    ├── features.py             <- Code to create features for modeling
-    │
-    ├── modeling                
+└── guitar_project
+    ├── __init__.py
+    ├── config.py
+    ├── dataset.py
+    ├── features.py
+    ├── modeling
     │   ├── __init__.py 
-    │   ├── predict.py          <- Code to run model inference with trained models          
-    │   └── train.py            <- Code to train models
-    │
-    └── plots.py                <- Code to create visualizations
+    │   ├── predict.py
+    │   └── train.py
+    └── plots.py
 ```
-
---------
-
