@@ -1,5 +1,6 @@
 awscli
 ipython
+ipykernel
 jupyterlab
 loguru
 matplotlib
@@ -13,5 +14,9 @@ ruff
 scikit-learn
 tqdm
 typer
+torch>=2.1
+torchaudio>=2.1
+soundfile
+
 stable-baselines3[extra]
 -e .

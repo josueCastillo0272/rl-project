@@ -27,15 +27,10 @@ The goal is to simulate a virtual signal chain where an RL agent learns to repro
 
 ## Directory Structure
 ```
-guitar-rl/
+rl-project/
 ├── LICENSE
 ├── Makefile
 ├── README.md
-├── data
-│   ├── external
-│   ├── interim
-│   ├── processed
-│   └── raw
 │
 ├── docs
 │
@@ -56,6 +51,11 @@ guitar-rl/
 │
 └── guitar_project
     ├── __init__.py
+    ├── data
+    │   ├── external
+    │   ├── interim
+    │   ├── processed
+    │   └── raw
     ├── config.py
     ├── dataset.py
     ├── features.py

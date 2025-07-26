@@ -1,5 +1,7 @@
 import torch
 import torchaudio
+
+from pathlib import Path
 from torchaudio.transforms import Resample
 import torch.nn.functional as F
 
@@ -15,8 +17,18 @@ def load_wav_to_tensor(filepath: str, sample_rate: int = 16000) -> torch.Tensor:
         FileNotFoundError: If the file does not exist.
         RuntimeError: If loading or resampling fails.
     """
+
+    # Use Path to get data
+    path = Path(filepath)
+    if not path.is_absolute():
+        project_root = Path(__file__).resolve().parent.parent
+        path = (project_root / path).resolve()
+
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+
     try:
-        waveform, orig_sr = torchaudio.load(filepath)  # waveform: (channels, samples)
+        waveform, orig_sr = torchaudio.load(str(path))  # waveform: (channels, samples)
     except FileNotFoundError as e:
         raise FileNotFoundError(f"File not found: {filepath}") from e
     except Exception as e:
@@ -64,7 +76,7 @@ def pad_or_crop(waveform: torch.Tensor, target_len: int, random_crop: bool = Tru
         waveform = F.pad(waveform, (0, pad_amt))
     return waveform
 
-def normalize_amplitude(waveform: torch.Tensor, target_rms: float = 0.1, eps: float = 1e-9) -> torch.Tensor:
+def normalize_amplitude(waveform: torch.Tensor, target_rms: float = 0.1, eps: float = 1e-8) -> torch.Tensor:
     """
     Applies RMS normalization followed by peak normalization.
     Args:
@@ -75,14 +87,19 @@ def normalize_amplitude(waveform: torch.Tensor, target_rms: float = 0.1, eps: fl
     Returns:
         torch.Tensor: A new tensor with normalized amplitude
     """
+    # Copy waveform
+    wf = waveform.clone().to(torch.float32)
+
     # RMS normalization
-    rms = waveform.pow(2).mean().sqrt()
-    if rms > eps:
-        waveform = waveform * (target_rms/rms)
+    rms = wf.pow(2).mean().sqrt()
+
+    gain = (target_rms) / (rms + eps)
+
+    wf *= gain
 
     # Peak normalization
-    peak = waveform.abs().max()
+    peak = wf.abs().max()
     if peak > 1.0:
-        waveform /= peak
+        wf /= peak
 
-    return waveform
+    return wf

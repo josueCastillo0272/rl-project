@@ -1,0 +1,1 @@
+from guitarProject import config # noqa: F401
