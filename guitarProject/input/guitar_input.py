@@ -1,10 +1,10 @@
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import List, Optional
-
+import pyo
 
 class GuitarActionType(Enum):
-    FRET = auto()
+    PICK = auto()
     STRUM = auto()
     HAMMER_ON = auto()
     PULL_OFF = auto()
@@ -23,6 +23,7 @@ class GuitarAction:
 
 @dataclass
 class GuitarInputSequence:
+    tuning: List[int] = [40, 45, 50, 55, 59, 64]  # MIDI values
     actions: List[GuitarAction] = field(default_factory=list)
 
     def add_action(self, action: GuitarAction):
@@ -34,4 +35,31 @@ class GuitarInputSequence:
         Returns:
             float: Playability score (higher is better)
         """
-        pass
+        # TODO: Implement 
+           
+    # TODO: move this into a simulator class
+    def to_wav(self) -> None:
+        server = pyo.Server(audio="offline").boot()
+        server.recordOptions(dur=4.0, filename="simple_guitar.wav", fileformat=0)
+
+        server.start()
+        
+        for action in self.actions:
+            fret = action.fret if action.fret else 0
+            freq = pyo.midiToHz(fret + self.tuning[action.string])
+            
+            env = pyo.Adsr(
+                attack=0.01,
+                decay=0.1,
+                sustain=0.5,
+                release=0.3,
+                dur=2,
+                mul=0.1
+            )
+            
+            osc = pyo.Sine(freq=freq, mul=env).out(dur=2)
+
+        # Let the render complete
+        server.shutdown()
+        print("Saved to simple_guitar.wav")
+        
