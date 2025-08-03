@@ -1,7 +1,11 @@
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import List, Optional
+
 import pyo
+
+from .pedals import Pedal
+
 
 class GuitarActionType(Enum):
     PICK = auto()
@@ -25,6 +29,7 @@ class GuitarAction:
 class GuitarInputSequence:
     tuning: List[int] = [40, 45, 50, 55, 59, 64]  # MIDI values
     actions: List[GuitarAction] = field(default_factory=list)
+    pedal: Pedal
 
     def add_action(self, action: GuitarAction):
         self.actions.append(action)
@@ -35,7 +40,7 @@ class GuitarInputSequence:
         Returns:
             float: Playability score (higher is better)
         """
-        # TODO: Implement 
+        return 0.0
            
     # TODO: move this into a simulator class
     def to_wav(self) -> None:
