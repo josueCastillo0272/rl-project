@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 import torch
-
+import math
 
 
 @dataclass(slots=True)
@@ -16,7 +16,6 @@ class Pedal(ABC):
     Attributes:
         name: Human-readable name of the pedal
     """
-    name: str = "pedal"
 
     @abstractmethod
     def apply(self, waveform: torch.Tensor) -> torch.Tensor:
@@ -60,10 +59,10 @@ class Overdrive(Pedal):
         color: Curvature / steepness of tanh (higher => earlier/harder clip)
         mix: Wet/dry blend in [0,1]; 1.0 is fully distorted
     """
-    gain: float
+    name: str = "overdrive"
     color: float = 0.5
     mix: float = 1.0
-    name: str = "overdrive"
+    gain: float = 1.0
 
     def apply(self, waveform: torch.Tensor,) -> torch.Tensor:
         device, dtype = waveform.device, waveform.dtype
@@ -98,30 +97,43 @@ class Delay(Pedal):
     delay_time: float
     feedback: float
     effect_level: float
-    sr: int = 44100
     name: str = "delay"
+    sr: int = 44100
     def apply(self, waveform: torch.Tensor) -> torch.Tensor:
+        device, dtype = waveform.device, waveform.dtype
+        x = waveform
+        T = x.numel()
 
-        device, dtype  = waveform.device, waveform.dtype
-        T = waveform.numel()
-        D = int(round(self.delay_time * self.sr))
+        D = int(round(max(0.0, self.delay_time) * float(self.sr)))
         fb = float(self.feedback)
-        m = torch.as_tensor(self.effect_level, device=device, dtype = dtype)
+        m  = torch.as_tensor(self.effect_level, device=device, dtype=dtype).clamp_(0.0, 1.0)
 
-        # Delay not possible
-        if T == 0 or D >= T:
-            return waveform
-        
-        wet = torch.zeroes_like(waveform, device=device,dtype=dtype)
-        temp = waveform.clone()
+        # No delay possible or no shift
+        if T == 0 or D <= 0 or D >= T:
+            return x
 
-        # Accumulate echoes with feedback
-        while True:
-            temp = torch.cat([torch.zeroes(D, device=device, dtype=dtype), temp[:-D]]) * fb
-            if temp.abs().max() < 1e-5: break # Stop when signal is tiny 
-            wet += temp
+        # Compute echo count so last echo is below a tail threshold (e.g., -60 dB)
+        tail_db = -60.0
+        fb_mag = abs(fb)
+        if fb_mag < 1e-6:
+            K = 1
+        else:
+            tail_lin = 10.0 ** (tail_db / 20.0)  # -60 dB -> 0.001
+            K = max(1, int(math.ceil(math.log(tail_lin) / math.log(fb_mag))))
 
-        return (1-m) * waveform + m*wet
+        wet = torch.zeros_like(x, device=device, dtype=dtype)
+
+        # First echo coefficient = 1.0 (important!), then multiply by fb each tap
+        coeff = 1.0
+        for k in range(1, K + 1):
+            shift = D * k
+            if shift >= T:
+                break
+            wet[shift:] += torch.as_tensor(coeff, device=device, dtype=dtype) * x[:-shift]
+            coeff *= fb  # subsequent echoes get smaller by feedback
+
+        # Blend
+        return (1 - m) * x + m * wet
 
 class Reverb(Pedal):
     ...
