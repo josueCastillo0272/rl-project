@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import List, Optional
-
+from dataclasses import field
 import pyo
 
 from .pedals import Pedal
@@ -27,9 +27,9 @@ class GuitarAction:
 
 @dataclass
 class GuitarInputSequence:
-    tuning: List[int] = [40, 45, 50, 55, 59, 64]  # MIDI values
+    tuning: List[int] = field(default_factory=lambda: [40, 45, 50, 55, 59, 64]) # MIDI values
     actions: List[GuitarAction] = field(default_factory=list)
-    pedal: Pedal
+    # pedal: Pedal 
 
     def add_action(self, action: GuitarAction):
         self.actions.append(action)

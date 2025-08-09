@@ -18,5 +18,5 @@ torch>=2.1
 torchaudio>=2.1
 soundfile
 stable-baselines3[extra]
-pyo
+setuptools
 -e .
