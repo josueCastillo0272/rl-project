@@ -4,8 +4,41 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Sequence
 
-import torch
 import math
+import numpy as np
+import torch
+
+
+from pedalboard import Pedalboard as PB
+from pedalboard import Gain as PBGain
+from pedalboard import Distortion as PBDistortion
+from pedalboard import Delay as PBDelay
+from pedalboard import Reverb as PBReverb
+from pedalboard import Phaser as PBPhaser
+
+
+def _to_mono_np(x: torch.Tensor) -> np.ndarray:
+    """
+    Accepts 1D mono waveform tensor (T,) and returns float32 numpy (T,).
+    """
+    if x.ndim != 1:
+        raise ValueError(f"Expected mono 1D tensor, got shape {tuple(x.shape)}")
+    return x.detach().cpu().to(torch.float32).numpy()
+
+def _to_tensor(y: np.ndarray, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+    """
+    Convert numpy mono (T,) back to torch on original device/dtype.
+    """
+    t = torch.from_numpy(np.asarray(y, dtype=np.float32))
+    return t.to(device=device, dtype=dtype)
+
+def _lin_gain_to_db(g: float) -> float:
+    """
+    Convert linear gain factor to decibels.
+    """
+    g = max(g, 1e-12)
+    return 20.0 * math.log10(g)
+
 
 
 @dataclass(slots=True)
@@ -27,19 +60,19 @@ class Pedal(ABC):
 
         Returns:
             Processed waveform as a 1D tensor of shape (T,).
-        
         """
         ...
 
     def __call__(self, waveform: torch.Tensor) -> torch.Tensor:
         return self.apply(waveform)
-    
+
 
 @dataclass(slots=True)
 class SequencePedal(Pedal):
-    """ Apply multiple pedals in order (left to right). """
+    """Apply multiple pedals in order (left to right)."""
     pedals: Sequence[Pedal] = ()
-    
+    name: str = "sequence"
+
     def apply(self, waveform: torch.Tensor) -> torch.Tensor:
         out = waveform
         for pedal in self.pedals:
@@ -51,95 +84,153 @@ class SequencePedal(Pedal):
 @dataclass(slots=True)
 class Overdrive(Pedal):
     """
-    Soft-clipping overdrive using a tanh waveshaper.
-    y = mix * (tanh(color * gain * x) / tanh(color)) + (1-mix)*x
+    Overdrive via pedalboard's Distortion (tanh) with optional pre-gain and dry/wet.
+    This preserves your original (color, mix, gain) interface:
 
-    Args:
-        gain: Applied before the waveshaper
-        color: Curvature / steepness of tanh (higher => earlier/harder clip)
-        mix: Wet/dry blend in [0,1]; 1.0 is fully distorted
+        - gain (linear)  -> mapped to pre-gain in dB
+        - color (0..~1)  -> mapped to Distortion.drive_db (approx: 0..30 dB)
+        - mix   (0..1)   -> dry/wet
+
+    Note: pedalboard.Distortion uses tanh waveshaping internally.
     """
     name: str = "overdrive"
-    color: float = 0.5
-    mix: float = 1.0
-    gain: float = 1.0
+    color: float = 0.5    # mapped to drive_db ≈ 60 * color dB (tweak as you like)
+    mix: float = 1.0      # wet/dry blend [0..1]
+    gain: float = 1.0     # linear pre-gain (>1 pushes drive harder)
 
-    def apply(self, waveform: torch.Tensor,) -> torch.Tensor:
+    def apply(self, waveform: torch.Tensor) -> torch.Tensor:
         device, dtype = waveform.device, waveform.dtype
-        g = torch.as_tensor(self.gain, device=device, dtype=dtype)
-        c = torch.as_tensor(max(0.0, self.color), device=device, dtype=dtype)
-        m = torch.as_tensor(self.mix, device=device, dtype=dtype).clamp_(0.0, 1.0)
+        x_np = _to_mono_np(waveform)
 
-        # Pre-gain
-        driven = waveform * g
+        # Build a small board: pre-gain -> distortion
+        pre_gain_db = _lin_gain_to_db(float(self.gain))
+        drive_db = float(self.color) * 100.0  # heuristic mapping; adjust to taste
 
-        # Soft clipping
-        eps = torch.finfo(dtype).eps # Smallest number you can add to 1.0
-        denom = torch.tanh(c).clamp_min(eps) # Makes sure denominator doesn't blow up (tanh(0) = 0)
-        shaped = torch.tanh(c*driven)/denom # tanh(c*x)/tanh(c)
+        board = PB([
+            PBGain(gain_db=pre_gain_db),
+            PBDistortion(drive_db=drive_db),
+        ])
 
+        # Process at an arbitrary sample rate since Distortion is rate-agnostic.
+        wet_np = board(x_np, sample_rate=48000)
 
-        return (1-m) * waveform + m*(shaped)
+        # Manual wet/dry blend (keep original peak relationship)
+        m = float(np.clip(self.mix, 0.0, 1.0))
+        out_np = (1.0 - m) * x_np + m * wet_np
 
-
-
+        return _to_tensor(out_np, device, dtype)
 
 @dataclass(slots=True)
 class Delay(Pedal):
     """
-    Simple feedback delay
+    Simple feedback delay using pedalboard.Delay.
+
     Args:
-        delay_time: Delay time in seconds.
-        feedback: Feedback amoutn in [0,1). Closer to 1 = more repeats.
-        effect_level: Wet/dry mix in [0,1]; 0 = dry only, 1 = wet only.
-        sr: Sample rate (Hz).
+        delay_time: delay in seconds
+        feedback:   feedback in [0, 1)
+        effect_level: wet/dry in [0, 1] (mapped to Delay.mix)
+        sr: sample rate used for processing
     """
     delay_time: float
     feedback: float
     effect_level: float
     name: str = "delay"
-    sr: int = 44100
+    sr: int = 22050
+
     def apply(self, waveform: torch.Tensor) -> torch.Tensor:
         device, dtype = waveform.device, waveform.dtype
-        x = waveform
-        T = x.numel()
+        x_np = _to_mono_np(waveform)
 
-        D = int(round(max(0.0, self.delay_time) * float(self.sr)))
-        fb = float(self.feedback)
-        m  = torch.as_tensor(self.effect_level, device=device, dtype=dtype).clamp_(0.0, 1.0)
+        delay = PBDelay(
+            delay_seconds=max(0.0, float(self.delay_time)),
+            feedback=float(self.feedback),
+            mix=float(np.clip(self.effect_level, 0.0, 1.0)),
+        )
+        wet_np = delay(x_np, sample_rate=float(self.sr))
+        return _to_tensor(wet_np, device, dtype)
 
-        # No delay possible or no shift
-        if T == 0 or D <= 0 or D >= T:
-            return x
 
-        # Compute echo count so last echo is below a tail threshold (e.g., -60 dB)
-        tail_db = -60.0
-        fb_mag = abs(fb)
-        if fb_mag < 1e-6:
-            K = 1
-        else:
-            tail_lin = 10.0 ** (tail_db / 20.0)  # -60 dB -> 0.001
-            K = max(1, int(math.ceil(math.log(tail_lin) / math.log(fb_mag))))
-
-        wet = torch.zeros_like(x, device=device, dtype=dtype)
-
-        # First echo coefficient = 1.0 (important!), then multiply by fb each tap
-        coeff = 1.0
-        for k in range(1, K + 1):
-            shift = D * k
-            if shift >= T:
-                break
-            wet[shift:] += torch.as_tensor(coeff, device=device, dtype=dtype) * x[:-shift]
-            coeff *= fb  # subsequent echoes get smaller by feedback
-
-        # Blend
-        return (1 - m) * x + m * wet
-
+@dataclass(slots=True)
 class Reverb(Pedal):
-    ...
+    """
+    FreeVerb-style reverb via pedalboard.Reverb.
 
-class Modulation(Pedal):
-    ...
+    Args:
+        room_size: 0..1
+        decay:     0..1 (mapped to damping)
+        mix:       wet level (0..1). Dry is set to (1 - mix).
+        sr:        sample rate for processing
+    """
+    room_size: float = 0.5
+    decay: float = 0.5
+    mix: float = 0.3
+    sr: int = 22050
+    name: str = "reverb"
 
+    def apply(self, waveform: torch.Tensor) -> torch.Tensor:
+        device, dtype = waveform.device, waveform.dtype
+        x_np = _to_mono_np(waveform)
 
+        wet_level = float(np.clip(self.mix, 0.0, 1.0))
+        dry_level = 1.0 - wet_level
 
+        reverb = PBReverb(
+            room_size=float(np.clip(self.room_size, 0.0, 1.0)),
+            damping=float(np.clip(self.decay, 0.0, 1.0)),
+            wet_level=wet_level,
+            dry_level=dry_level,
+            width=1.0,
+            freeze_mode=0.0,
+        )
+        y_np = reverb(x_np, sample_rate=float(self.sr))
+        return _to_tensor(y_np, device, dtype)
+
+    __call__ = apply
+
+@dataclass(slots=True)
+class Phaser(Pedal):
+    """
+    6‑stage phaser via pedalboard.Phaser.
+
+    Controls (typical phaser params):
+      - rate_hz:    LFO speed in Hz
+      - depth:      0..1 modulation depth
+      - feedback:   -1..1 feedback amount (more = sharper notches)
+      - centre_frequency_hz: center of the sweep in Hz
+      - mix:        wet/dry in [0,1]
+      - sr:         processing sample rate (Hz)
+    """
+    rate_hz: float = 0.8              # nice slow swirl
+    depth: float = 0.9                # wide sweep
+    feedback: float = 0.7             # strong but stable
+    centre_frequency_hz: float = 1000.0  # sweep centered in upper mids
+    mix: float = 0.6                   # more wet than dry
+    sr: int = 22050
+    name: str = "phaser"
+
+    def apply(self, waveform: torch.Tensor) -> torch.Tensor:
+        if waveform.ndim != 1:
+            raise ValueError(f"{self.name} expects mono 1D tensor (T,), got {tuple(waveform.shape)}")
+
+        device, dtype = waveform.device, waveform.dtype
+
+        # -> numpy float32 (mono)
+        x_np = waveform.detach().cpu().to(torch.float32).numpy()
+
+        # Clamp common ranges to be safe
+        depth = float(np.clip(self.depth, 0.0, 1.0))
+        mix = float(np.clip(self.mix, 0.0, 1.0))
+        feedback = float(np.clip(self.feedback, -0.99, 0.99))  # avoid instability
+
+        ph = PBPhaser(
+            rate_hz=float(self.rate_hz),
+            depth=depth,
+            feedback=feedback,
+            centre_frequency_hz=float(self.centre_frequency_hz),
+            mix=mix,
+        )
+
+        y_np = ph(x_np, sample_rate=float(self.sr))
+
+        y = torch.from_numpy(np.asarray(y_np, dtype=np.float32)).to(device=device, dtype=dtype)
+        return y
